@@ -17,6 +17,8 @@ Apache Arrow’s builders, which internally use Arrow’s memory pool (but no us
 
 This is a true zero-copy, heap-free data pipeline.
 
+For detailed memory profiling and validation of zero-copy behavior, see [PROOF.md](PROOF.md).
+
 ## Why This Matters
 
 Traditional IPC methods like pipes, message queues, or gRPC often serialize and copy data multiple times across processes. This proof of concept avoids that by:
