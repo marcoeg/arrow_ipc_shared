@@ -10,8 +10,8 @@ By combining these tools, this project allows two processes (written in C++ and 
 
 
 All memory allocation on the C++ side was done via:
-`memfd_create()` → kernel-managed anonymous in-memory file
-`mmap()` → direct virtual memory mapping of the memfd
+- `memfd_create()` → kernel-managed anonymous in-memory file
+- `mmap()` → direct virtual memory mapping of the memfd
 
 Apache Arrow’s builders, which internally use Arrow’s memory pool (but no userland malloc().
 
@@ -98,15 +98,10 @@ This maps the `memfd`, reads the stream using PyArrow, and prints the resulting 
 ## Example Output
 
 ```
-Received Arrow Table:
-     rand
-0      83
-1      45
-2      12
-...
-99     94
-
-[100 rows x 1 columns]
+Received Arrow RecordBatch:
+Schema: rand: int32
+Number of rows: 100
+First 5 values: [0, 13, 76, 46, 53]
 ```
 
 ## How It Works (Internally)
