@@ -1,32 +1,32 @@
-# Prerequisites
-*.d
+# Ignore CMake build artifacts
+/build/
+/CMakeFiles/
+/CMakeCache.txt
+/Makefile
+/cmake_install.cmake
+/install_manifest.txt
 
-# Compiled Object files
-*.slo
-*.lo
+# Ignore compiled binaries
 *.o
 *.obj
-
-# Precompiled Headers
-*.gch
-*.pch
-
-# Compiled Dynamic libraries
 *.so
-*.dylib
-*.dll
-
-# Fortran module files
-*.mod
-*.smod
-
-# Compiled Static libraries
-*.lai
-*.la
 *.a
-*.lib
-
-# Executables
-*.exe
 *.out
-*.app
+sender
+
+# Ignore Python bytecode
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Ignore logs or temp files
+*.log
+*.tmp
+
+# Editor / OS-specific files
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*~
