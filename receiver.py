@@ -22,13 +22,13 @@ buf = memoryview(mem)
 
 reader = ipc.open_stream(buf)
 batch = reader.read_next_batch()
-print("Received Arrow Table:\n", batch.to_pandas())
-df = batch.to_pandas()  # Extract data now
-reader.close()
+print("Received Arrow RecordBatch:")
+print("Schema:", batch.schema)
+print("Number of rows:", batch.num_rows)
+print("First 5 values:", batch.column(0).to_pylist()[:5])
 
+reader.close()
 del batch
 del reader
 del buf  # remove memoryview
 mem.close()   
-
-print("Received Arrow Table:\n", df)
