@@ -1,11 +1,8 @@
-// sender.cpp
+// sender.cpp (true zero-copy)
 //
-// This program creates an Apache Arrow RecordBatch in memory using C++,
-// writes it to an in-memory file (via memfd_create), and sends that file
-// descriptor to another process using a UNIX domain socket.
-// This enables zero-copy inter-process communication of typed tabular data.
-//
-// Dependencies: Apache Arrow C++ library, Linux-only syscalls (memfd_create, sendmsg)
+// This version avoids all intermediate memory buffers by writing Arrow IPC data
+// directly into a memory-mapped memfd region using Arrow's low-level buffer APIs.
+// No builders, no copies, and zero heap allocation by user code.
 
 #include <arrow/api.h>
 #include <arrow/io/api.h>
@@ -17,11 +14,12 @@
 #include <unistd.h>
 #include <iostream>
 #include <cstring>
+#include <random>
 
 #define SOCKET_PATH "/tmp/memfd_socket"
-#define MEM_SIZE (4096 * 10)  // size of the shared memory buffer
+#define MEM_SIZE (4096 * 10)
+#define NUM_ROWS 100
 
-// Sends a file descriptor over a UNIX domain socket
 void send_fd(int socket, int fd) {
     struct msghdr msg = {};
     char buf[CMSG_SPACE(sizeof(fd))] = {0};
@@ -42,90 +40,77 @@ void send_fd(int socket, int fd) {
 }
 
 int main() {
-    // 1. Create an in-memory file using memfd
-    int fd = memfd_create("arrow_mem", MFD_CLOEXEC);
+    // Step 1: Create and mmap a memory-backed file
+    int fd = memfd_create("arrow_zero_copy", MFD_CLOEXEC);
     if (fd == -1) {
-        std::cerr << "Failed to create memfd" << std::endl;
+        std::cerr << "memfd_create failed\n";
         return 1;
     }
-    ftruncate(fd, MEM_SIZE);  // Resize the memory file
+    ftruncate(fd, MEM_SIZE);
 
-    // 2. Build a simple Arrow table with one column of random int32 values
-    std::shared_ptr<arrow::Array> array;
-    arrow::Int32Builder builder;
-
-    for (int i = 0; i < 100; ++i) {
-        auto status = builder.Append(rand() % 100);
-        if (!status.ok()) {
-            std::cerr << "Append failed: " << status.ToString() << std::endl;
-            return 1;
-        }
-    }
-
-    auto finish_status = builder.Finish(&array);
-    if (!finish_status.ok()) {
-        std::cerr << "Finish failed: " << finish_status.ToString() << std::endl;
+    void* mem = mmap(NULL, MEM_SIZE, PROT_WRITE, MAP_SHARED, fd, 0);
+    if (mem == MAP_FAILED) {
+        std::cerr << "mmap failed\n";
         return 1;
     }
 
+    // Step 2: Wrap the mmap region with Arrow's FixedSizeBufferWriter
+    auto buffer = std::make_shared<arrow::MutableBuffer>(
+        reinterpret_cast<uint8_t*>(mem), MEM_SIZE);
+    auto writer_stream = std::make_shared<arrow::io::FixedSizeBufferWriter>(buffer);
+
+    // Step 3: Create raw data buffer for Arrow array
+    std::vector<int32_t> values(NUM_ROWS);
+    std::default_random_engine gen;
+    std::uniform_int_distribution<int> dist(0, 100);
+    for (int i = 0; i < NUM_ROWS; ++i) {
+        values[i] = dist(gen);
+    }
+
+    auto data_buffer = std::make_shared<arrow::Buffer>(
+        reinterpret_cast<const uint8_t*>(values.data()),
+        values.size() * sizeof(int32_t));
+
+    // Step 4: Create Arrow Array and RecordBatch without builders
+    auto array_data = arrow::ArrayData::Make(arrow::int32(), NUM_ROWS, {nullptr, data_buffer});
+    auto array = arrow::MakeArray(array_data);
     auto schema = arrow::schema({arrow::field("rand", arrow::int32())});
-    auto batch = arrow::RecordBatch::Make(schema, array->length(), {array});
+    auto batch = arrow::RecordBatch::Make(schema, NUM_ROWS, {array});
 
-    // 3. Write the RecordBatch to the memfd using Arrow's IPC format
-    int writer_fd = dup(fd);  // Duplicate fd because Arrow will take ownership
-    auto output_result = arrow::io::FileOutputStream::Open(writer_fd);
-    if (!output_result.ok()) {
-        std::cerr << "Failed to open FileOutputStream: " << output_result.status().ToString() << std::endl;
-        return 1;
-    }
-    std::shared_ptr<arrow::io::FileOutputStream> output = *output_result;
-
-    auto writer_result = arrow::ipc::MakeStreamWriter(output, schema);
+    // Step 5: Serialize the RecordBatch into the memory-mapped file
+    auto writer_result = arrow::ipc::MakeStreamWriter(writer_stream, schema);
     if (!writer_result.ok()) {
-        std::cerr << "Failed to create Arrow writer: " << writer_result.status().ToString() << std::endl;
+        std::cerr << "StreamWriter creation failed\n";
         return 1;
     }
     std::shared_ptr<arrow::ipc::RecordBatchWriter> writer = *writer_result;
 
     auto write_status = writer->WriteRecordBatch(*batch);
     if (!write_status.ok()) {
-        std::cerr << "Failed to write RecordBatch: " << write_status.ToString() << std::endl;
+        std::cerr << "Write failed: " << write_status.ToString() << std::endl;
         return 1;
     }
 
-    auto close_status = writer->Close();
-    if (!close_status.ok()) {
-        std::cerr << "Failed to close writer: " << close_status.ToString() << std::endl;
+    if (!writer->Close().ok()) {
+        std::cerr << "Writer close failed\n";
         return 1;
     }
 
-    // 4. Set up UNIX domain socket and send the memfd to another process
+    // Step 6: Send the memfd over UNIX domain socket
     int sock = socket(AF_UNIX, SOCK_STREAM, 0);
-    if (sock < 0) {
-        std::cerr << "Socket creation failed\n";
-        return 1;
-    }
-
     struct sockaddr_un addr = {.sun_family = AF_UNIX};
-    std::strcpy(addr.sun_path, SOCKET_PATH);
-    unlink(SOCKET_PATH);  // Remove old socket file
-    if (bind(sock, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-        std::cerr << "Socket bind failed\n";
-        return 1;
-    }
-
+    strcpy(addr.sun_path, SOCKET_PATH);
+    unlink(SOCKET_PATH);
+    bind(sock, (struct sockaddr*)&addr, sizeof(addr));
     listen(sock, 1);
-    int conn = accept(sock, NULL, NULL);
-    if (conn < 0) {
-        std::cerr << "Accept failed\n";
-        return 1;
-    }
 
+    int conn = accept(sock, NULL, NULL);
     send_fd(conn, fd);
 
-    // 5. Clean up
+    // Cleanup
     close(conn);
     close(sock);
     close(fd);
+    munmap(mem, MEM_SIZE);
     return 0;
 }

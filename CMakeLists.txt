@@ -3,6 +3,8 @@ project(ArrowMemfdSender)
 
 set(CMAKE_CXX_STANDARD 17)
 
+set(CMAKE_BUILD_TYPE Debug)
+
 # Find Arrow manually
 find_package(Arrow REQUIRED)
 
