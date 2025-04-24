@@ -98,10 +98,27 @@ This maps the `memfd`, reads the stream using PyArrow, and prints the resulting 
 ## Example Output
 
 ```
-Received Arrow RecordBatch:
-Schema: rand: int32
-Number of rows: 100
-First 5 values: [0, 13, 76, 46, 53]
+RecordBatch schema: rand: int32
+Column name: rand
+Column Arrow type: int32
+== Arrow Table Summary ==
+Schema      : rand: int32
+Num Columns : 1
+Num Rows    : 100
+
+== First 10 Rows ==
+rand
+----------------------------------------
+0
+13
+76
+46
+53
+22
+4
+68
+68
+94
 ```
 
 ## How It Works (Internally)
